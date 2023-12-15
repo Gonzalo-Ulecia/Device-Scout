@@ -1,0 +1,19 @@
+{
+	"python":[
+		{
+			"module_name": "Simple ARP Scan",
+			"path": "modules/modules_python/simple_arp_scan.py",
+			"execute_mode": "python_module"
+		}
+	],
+
+	"c": [
+		{
+			"module_name": "C ARP Scan",
+			"path": "modules/modules_c/simple_arp_scan.c",
+			"execute_mode": "c_library"
+		}
+	]
+
+
+}
