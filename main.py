@@ -7,6 +7,8 @@ import threading
 import time
 import shutil
 import importlib.util
+import argparse
+import ipaddress
 from contextlib import redirect_stdout
 from io import StringIO
 
@@ -35,7 +37,7 @@ class Display:
 	TARGETS = []  #Array of Target objects, using for store targets found by modules
 
 	def __init__(self):
-		#self.clear_console()
+		self.clear_console()
 		self.header = self.makeHeader()		#Header of display
 		self.targets_info = ""				#Information about targets found
 		self.run_info = ""					#Information about the execution of the device scout
@@ -64,21 +66,35 @@ class Display:
 
 		return header
 
-
+	'''
+		SETTER self.run_info
+	'''
 	def setInfo(self, info):
 		self.run_info = info
 
+	'''
+		UPDATE self.run_info
+	'''
 	def updateInfo(self, info):
 		self.run_info = self.run_info + info
 
+	'''
+		UPDATE and DISPLAY self.run_info
+	'''
 	def updateInfoRun(self, info, color=RESET_COLOR):
 		self.run_info = color+info+"\n"+self.run_info
 		self.display()
 
+	'''
+		addTarget: Add newly found device
+	'''
 	def addTarget(self, target):
 		self.TARGETS.append(target)
 		self.updateTargetsInfo()
 
+	'''
+		UPDATE and DISPLAY self.targets_info
+	'''
 	def updateTargetsInfo(self):
 		targets_info = ""
 		for target in self.TARGETS:
@@ -87,9 +103,15 @@ class Display:
 		self.targets_info = targets_info
 		self.display()
 
+	'''
+		Clear output on the console
+	'''
 	def clear_console(self):
 		print("\033c", end="")
 
+	'''
+		Draw a line with "-" on the console
+	'''
 	def make_line(self):
 		console_width, _ = shutil.get_terminal_size()	#width of terminal
 		line = ""
@@ -99,6 +121,9 @@ class Display:
 		line = line + "\n\n"
 		return line
 
+	'''
+		DISPLAY information about found targets on the console
+	'''
 	def display(self):
 		self.clear_console()
 		print(self.header+self.targets_info+"\n"+self.make_line()+self.run_info)
@@ -108,11 +133,14 @@ class Display:
 '''
 
 class Module:
-	def __init__(self, module_name="", path="", execute_mode="", output_queue=None):
+	def __init__(self, net, netmask, interface, module_name="", path="", execute_mode="", output_queue=None):
 		self.module_name = module_name   	#Module name
 		self.path = path 					#path of Module
 		self.execute_mode = execute_mode	#Execute mode of Module
 		self.output_queue = output_queue 	#Shared output queue
+		self.net = net
+		self.netmask = netmask
+		self.interface = interface
 	'''
 		Run the module depending on its programming language
 		Add targets found by module to output_queue
@@ -123,8 +151,15 @@ class Module:
 		#self.output_queue.put({'type':'target', 'value':Target('192.168.0.34', "00:11:22:33:44:55", "Linux Mint"), 'color':RESET_COLOR})
 		#self.output_queue.put({'type':'run_info', 'value':self.module_name+": "+G_COLOR+"New device found"+RESET_COLOR, 'color':RESET_COLOR})
 
+	'''
+		python_module: Execute python modules
+
+	'''
 	def python_module(self):
 
+		'''
+			get_target_module: Reads the queue of targets loaded by the module, then adds each target to the output queue for display.
+		'''
 		def get_target_module(targets):
 			while True:
 				if not targets.empty():
@@ -133,8 +168,8 @@ class Module:
 						break
 					else:
 						data_list = data.split("-")
-						self.output_queue.put({'type':'target', 'value':Target(data_list[0],data_list[1],data_list[2]),'color':RESET_COLOR})
-						self.output_queue.put({'type':'run_info','value':self.module_name+": Discover new target",'color':G_COLOR})
+						self.output_queue.put({'type':'target', 'value':Target(data_list[0], data_list[1], data_list[2]), 'color':RESET_COLOR})
+						self.output_queue.put({'type':'run_info','value':self.module_name + ": Discover new target", 'color':G_COLOR})
 
 		module_name = self.module_name
 		location_module = importlib.util.spec_from_file_location(module_name, self.path)
@@ -143,11 +178,49 @@ class Module:
 		targets_module = module.get_targets()
 		thread_get_targets = threading.Thread(target=get_target_module,args=(targets_module,))
 		thread_get_targets.start()
-		module.start_module()
+		module.start_module(self.net,self.netmask,self.interface)
 		targets_module.put(['END'])
 		thread_get_targets.join()
 
 
+class Parameters():
+	def __init__(self):
+		pass
+
+	def get_parameters(self):
+		parser = argparse.ArgumentParser(description='Device Scout is a small framework that aims to discover connected devices on a network.')
+
+		#REQUIRED PARAMETERS
+		parser.add_argument('-i', '--interface', type=str, required=True, help='Name of the interface (Max length: 20)')
+		parser.add_argument('-n', '--ip', type=str, required=True, help='Target (Network Address)')
+		
+		#OPTIONAL PARAMETERS
+		parser.add_argument('-m', '--netmask', type=str, default='255.255.255.0', help='Netmask (Default: 255.255.255.0)')
+
+		#INPUT VALIDATION
+		args = parser.parse_args()
+		
+		if len(args.interface) > 20:
+			parser.error('Max length of name: 20 characters.')
+		if not self.check_ip(args.ip):
+			parser.error('The IP address is not valid.')
+		if args.netmask and not self.check_netmask(args.netmask):
+			parser.error('The netmask address is not valid.')
+		return args
+
+	def check_ip(self, ip):
+		try:
+			ipaddress.ip_address(ip)
+			return True
+		except ValueError:
+			return False
+
+	def check_netmask(self, netmask):
+		try:
+			ipaddress.ip_network(f"192.168.0.1/{netmask}", strict=False)
+			return True
+		except ValueError:
+			return False
 
 class Modules_Reader:
 
@@ -155,9 +228,12 @@ class Modules_Reader:
 	OUTPUT_QUEUE = queue.Queue()	#Queue that save outputs from threads
 
 
-	def __init__(self):
+	def __init__(self, interface, net, netmask):
 		self.display = Display()	#Create Display Object
 		self.display.display()		#Display
+		self.interface = interface	#interface
+		self.net = net 				#network to search for device
+		self.netmask = netmask		#netmask
 		self.load_modules()  		#Load modules from modules_schema.json
 		self.run_modules()			#Run modules
 
@@ -198,7 +274,8 @@ class Modules_Reader:
 					run_info = run_info + "\t\t->"+G_COLOR+"EXECUTE MODE:\t"+module['execute_mode']+RESET_COLOR+"\n"
 
 					#Load module
-					module_obj = Module(module['module_name'], module['path'], module['execute_mode'], self.OUTPUT_QUEUE)
+					print(str(self.net))
+					module_obj = Module(self.net, self.netmask, self.interface, module['module_name'], module['path'], module['execute_mode'], self.OUTPUT_QUEUE)
 					self.MODULES.append(module_obj)
 
 
@@ -261,5 +338,7 @@ class Modules_Reader:
 	Start point of Device Scout
 '''
 if __name__ == "__main__":
-	Loader = Modules_Reader()
+	args = Parameters().get_parameters()
+	print(str("ip: "+args.ip+" netmask: "+args.netmask+" interface:"+args.interface))
+	Loader = Modules_Reader(interface=args.interface, net=args.ip, netmask=args.netmask)
 	
