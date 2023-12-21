@@ -10,7 +10,7 @@
 	"c": [
 		{
 			"module_name": "C ARP Scan",
-			"path": "modules/modules_c/simple_arp_scan.c",
+			"path": "modules/modules_c/simple_arp_scan.dll",
 			"execute_mode": "c_library"
 		}
 	]
